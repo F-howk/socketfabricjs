@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        :root {
+            --cursor: crosshair
+        }
+
+        canvas {
+            cursor: var(--cursor) !important;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- <script src="https://cdn.socket.io/socket.io-1.2.0.js"></script> -->
+    <canvas id="canvas" width="1366" height="768"></canvas>
+    <input type="color" id="color" value="#ff0000">
+    <button id="btn1" onclick="canvas_btn(1)">画笔</button>
+    <button id="btn2" onclick="canvas_btn(2)">选择</button>
+    <button id="btn3" onclick="canvas_btn(3)">橡皮擦</button>
+    <script src="./fabric.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        function canvas_btn(n,type = 0) {
+            if (activeObject) {
+                canvas.discardActiveObject(activeObject); //清楚选中框
+                canvas.renderAll();
+            }
+            if (n == 1) {
+                document.documentElement.style.setProperty('--cursor', 'crosshair')
+                draw();
+            } else if (n == 2) {
+                document.documentElement.style.setProperty('--cursor', 'move')
+                select();
+            } else if (n == 3) {
+                document.documentElement.style.setProperty('--cursor', 'cell')
+                select();
+                remove = true;
+            }
+            if(type == 0){
+                socket.emit("paint", {
+                    type: "canvas_btn",
+                    login_name: cache_name,
+                    data: {
+                        activeNum: n,
+                    },
+                });
+            }
+        }
+        let activeObject = null;
+        let color = document.querySelector('#color');
+        color.addEventListener('change', function () {
+            brush.color = this.value;
+            canvas_btn(1)
+            socket.emit("paint", {
+                type: "changeColor",
+                login_name: cache_name,
+                data: {
+                    color: this.value
+                },
+            });
+        })
+        let cache_name = '';
+
+        function inputName() {
+            let name = prompt('Please enter your name', '');
+            if (name) {
+                cache_name = name + '-' + new Date().getTime();
+            } else {
+                inputName()
+            }
+        }
+
+        function stop() {
+            remove = false;
+            drawMode = false;
+            canvas.selection = false;
+            canvas.skipTargetFind = true;
+        }
+
+        function select() {
+            canvas.skipTargetFind = false;
+            drawMode = false;
+            remove = false;
+        }
+        //画笔
+        function draw() {
+            remove = false;
+            canvas.skipTargetFind = true;
+            canvas.selection = false;
+            drawMode = true;
+        }
+        let canvas = new fabric.Canvas("canvas", {
+            selection: false,
+            skipTargetFind: true,
+            enableRetinaScaling: false,
+        });
+        let drawing = false;
+        let drawMode = true;
+        let socket = io.connect();
+        setTimeout(() => {
+            inputName()
+        }, 300);
+
+        fabric.Object.prototype.set({
+            centeredScaling: true, //角落放大缩小是否是以图形中心为放大原点
+            centeredRotation: true,
+            originX: "center",
+            originY: "center",
+        });
+        canvas.setDimensions({
+            width: 1366,
+            height: 708
+        });
+        canvas.setDimensions({
+            width: 1366 + "px",
+            height: 768 + "px"
+        }, {
+            cssOnly: true
+        });
+        let brush = new fabric.PencilBrush(canvas);
+        // 笔画颜色
+        brush.color = 'red';
+        brush.width = 3;
+        canvas.on("mouse:down", (data) => {
+            if (drawMode) {
+                curDrawObjectId = new Date().getTime();
+                let pointer = data.pointer;
+                socket.emit("paint", {
+                    type: 1,
+                    login_name: cache_name,
+                    data: {
+                        id: curDrawObjectId,
+                        type: "mouseDown",
+                        point: data,
+                        bruchColor: brush.color,
+                    },
+                });
+                drawing = true;
+                brush.onMouseDown(pointer, data);
+            }
+        });
+        canvas.on("mouse:move", (data) => {
+            if (drawMode && drawing) {
+                let pointer = data.pointer;
+                socket.emit("paint", {
+                    type: 1,
+                    login_name: cache_name,
+                    data: {
+                        id: curDrawObjectId,
+                        type: "mouseMove",
+                        point: data,
+                        bruchColor: brush.color,
+                    },
+                });
+                brush.onMouseMove(pointer, data);
+            }
+        });
+        canvas.on("mouse:up", (data) => {
+            if (drawMode && drawing) {
+                let pointer = data.pointer;
+                brush.onMouseUp(data);
+                let len = canvas.getObjects().length;
+                canvas.item(len - 1).id = curDrawObjectId;
+                socket.emit("paint", {
+                    type: 1,
+                    login_name: cache_name,
+                    data: {
+                        id: curDrawObjectId,
+                        type: "mouseUp",
+                        point: data,
+                        bruchColor: brush.color,
+                    },
+                });
+                drawing = false;
+            }
+        });
+        socket.on("paint", (data) => {
+            if (data.login_name == cache_name) return;
+            if (data.type == 1) {
+                let pointer = data.data.point.pointer;
+                brush.color = data.data.bruchColor;
+                let obj = {
+                    x: pointer.x,
+                    y: pointer.y
+                };
+                switch (data.data.type) {
+                    case "mouseDown": {
+                        brush.onMouseDown(obj, {
+                            e: {
+                                isPrimary: true
+                            },
+                        });
+                        break;
+                    }
+                    case "mouseMove": {
+                        brush.onMouseMove(obj, {
+                            e: {
+                                isPrimary: true
+                            },
+                        });
+                        break;
+                    }
+                    case "mouseUp": {
+                        brush.onMouseUp({
+                            e: {
+                                isPrimary: true
+                            }
+                        });
+                        let len = canvas.getObjects().length;
+                        canvas.item(len - 1).id = data.data.id;
+                        break;
+                    }
+                }
+            } else if (data.type == 2) {
+                if (data.data.type == "move") {
+                    let d = data.data.data;
+                    if (!d.id) return;
+                    canvas.getObjects().forEach((v) => {
+                        if (v.id == d.id) {
+                            v.set({
+                                left: d.x,
+                                top: d.y
+                            });
+                            canvas.renderAll();
+                        }
+                    });
+                } else if (data.data.type == "scale") {
+                    let d = data.data.data;
+                    if (!d.id) return;
+                    canvas.getObjects().forEach((v) => {
+                        if (v.id == d.id) {
+                            v.set({
+                                scaleX: d.scaleX,
+                                scaleY: d.scaleY,
+                            });
+                            canvas.renderAll();
+                        }
+                    });
+                } else if (data.data.type == "rotate") {
+                    let d = data.data.data;
+                    if (!d.id) return;
+                    canvas.getObjects().forEach((v) => {
+                        if (v.id == d.id) {
+                            v.set({
+                                angle: d.angle
+                            });
+                            canvas.renderAll();
+                        }
+                    });
+                }
+            } else if (data.type == 3) {
+                let d = data.data;
+                if (!d.id) return;
+                canvas.getObjects().forEach((v) => {
+                    if (v.id == d.id) {
+                        canvas.remove(v);
+                        canvas.renderAll();
+                    }
+                });
+            }
+            //改变画笔颜色
+            else if (data.type == "changeColor") {
+                isShowColorBtn = false;
+                brush.color = data.data.color;
+                color.value = brush.color;
+            } else if (data.type == "canvas_btn") {
+                activeNum = data.data.activeNum;
+                canvas_btn(data.data.activeNum, 1);
+            }
+        });
+        canvas.on("selection:created", (e) => {
+            if (remove == true) {
+                if (e.target.type !== "image") {
+                    socket.emit("paint", {
+                        type: 3,
+                        login_name: cache_name,
+                        data: {
+                            id: e.target.id
+                        },
+                    });
+                    canvas.remove(e.target);
+                }
+            }
+        });
+        // canvas.on("object:removed", e => {
+        // });
+        canvas.on("object:selected", (e) => {
+            activeObject = e;
+        });
+        canvas.on("object:moving", (e) => {
+            socket.emit("paint", {
+                type: 2,
+                login_name: cache_name,
+                data: {
+                    type: "move",
+                    data: {
+                        id: e.target.id,
+                        x: e.target.left,
+                        y: e.target.top
+                    },
+                },
+            });
+        });
+        canvas.on("object:scaling", (e) => {
+            e.target.set({
+                flipX: false,
+                flipY: false
+            });
+            socket.emit("paint", {
+                type: 2,
+                login_name: cache_name,
+                data: {
+                    type: "scale",
+                    data: {
+                        id: e.target.id,
+                        scaleX: e.target.scaleX,
+                        scaleY: e.target.scaleY,
+                    },
+                },
+            });
+        });
+        canvas.on("object:rotating", (e) => {
+            socket.emit("paint", {
+                type: 2,
+                login_name: cache_name,
+                data: {
+                    type: "rotate",
+                    data: {
+                        id: e.target.id,
+                        angle: e.target.angle,
+                    },
+                },
+            });
+        });
+    </script>
+</body>
+
+</html>
